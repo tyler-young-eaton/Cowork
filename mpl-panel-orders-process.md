@@ -2,9 +2,26 @@
 
 > **Owner:** Tyler D. Young (Sr. Design Engineer, Eaton MPL)
 > **Maintained in git** — see the Change Log at the bottom. Copilot proposes updates and supplies a commit note; Tyler commits.
-> **Last updated:** 2026-07-09 (v1.4)
+> **Last updated:** 2026-07-09 (v1.5)
 
 ---
+
+## How this document is organized — two modes
+
+This process runs in **two distinct modes**. Keep them separate:
+
+| Mode | Sections | When it runs | What it does |
+|---|---|---|---|
+| **Part A — Daily Scheduled Task** | §1–§8 | **Automatic**, every morning (7:00 AM ET) | Reviews that day's Order & Sales Report, reconciles open **panel orders** against the Master AML (flags **MISSING**), and runs a data-quality scan → workbook + Teams summary. **It does not build BOMs.** |
+| **Part B — On-Demand BOM → Master AML** | §9–§10 | **By hand**, interactively (often the same day) | For a MISSING order, build its BOM from the configurator XML and drop it into the Master AML together, with approval. |
+
+**Hand-off:** Part A tells you *which orders still need a BOM*; Part B is where we *build and place* it. A typical day — the 7 AM task flags MISSING orders → you pick one → we run Part B on it.
+
+---
+
+# Part A — Daily Scheduled Task
+
+*Everything in §1–§8 is what the automated morning run does. No BOM building here.*
 
 ## 1. Purpose
 
@@ -71,6 +88,8 @@ Orders in these product codes require a panel to be ordered:
 
 ## 6. Scheduled Task & Output
 
+> **This section defines Part A — the automated daily run only.** It flags MISSING orders; it does **not** build BOMs (that's Part B, §9–§10).
+
 | Field | Value |
 |---|---|
 | **Name** | Daily Sales-Report Review — Panels & Data Quality |
@@ -115,6 +134,10 @@ Flags — **for review only, nothing is changed** — across all product familie
 - **Data-quality:** 313 flags — Catalog/Code mismatch 12 · Unmapped #N/A 6 · Blank qty 10 · Zero price 59 · Implausible date 28 · Hold/T-hold 198.
 
 ---
+
+# Part B — On-Demand: Build & Place a BOM on the Master AML
+
+*Run interactively when a Part A **MISSING** order needs its parts placed. Not part of the scheduled task.*
 
 ## 9. Building a Panel/Substation BOM from Configurator XML
 
@@ -203,3 +226,4 @@ Itemize: **transformer** + **panelboard per designation** + **every breaker** + 
 | 2026-07-09 | 1.2 | Broadened the task to **panels + data-quality scan**; added catalog-signature detection (§3), the data-quality scan (§7), and the four-tab styled output workbook (§6); renamed the task; refreshed the snapshot to 07-09-2026. |
 | 2026-07-09 | 1.3 | Added **§9 XML→BOM build rules** (PD base+`J` ordering; PD→FD 2-pole-shunt conversion; BAB integrated-shunt family; frame-matched shunts; CT sizing; RCMS/GFM; transformer lookup incl. 1Ph vs 3Ph tell; panelboard line; cross-designation consolidation) and **§10 Master AML drop-in procedure** (substation entry pattern; write only empty A–G; keep the BOM contiguous; find the true data end past the pre-filled "No" in col AA). Worked examples: TCM Substations (PRL4X PD/FD) and Anchor Cove Marina `SSE1514103` (PRL1X BAB, placed at A659:G668). |
 | 2026-07-09 | 1.4 | Reworked **§9** from the event-panel job: **§9d special-mod detection** (`BM_SpecMod` nodes → catalog-prefix flip `PUN→PAS/PBS`, and ground-fault counts); **main-breaker rule** (substations = MLO → main ordered; marina/event panels = main stays on panel → no line); **§9f panel line** = catalog # + Product ID + designation, receptacles off; **§9g ground-fault triad** (shunts = CTs = GFM circuits) with the **E-stop exception** (shunt without CT). Added the North Coast Montana `STA1503274` event-panel worked example (placed at A669:G672). |
+| 2026-07-09 | 1.5 | Reorganized into **two clearly-labeled modes**: **Part A — Daily Scheduled Task (§1–§8)** (automated morning reconciliation + data-quality; no BOM building) and **Part B — On-Demand BOM → Master AML (§9–§10)** (interactive build + drop-in). Added a 'two modes' orientation table and a Part-A scope note to §6. |
