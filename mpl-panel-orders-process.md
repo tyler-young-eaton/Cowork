@@ -2,7 +2,7 @@
 
 > **Owner:** Tyler D. Young (Sr. Design Engineer, Eaton MPL)
 > **Maintained in git** — see the Change Log at the bottom. Copilot proposes updates and supplies a commit note; Tyler commits.
-> **Last updated:** 2026-07-09 (v1.2)
+> **Last updated:** 2026-07-09 (v1.3)
 
 ---
 
@@ -116,6 +116,85 @@ Flags — **for review only, nothing is changed** — across all product familie
 
 ---
 
+## 9. Building a Panel/Substation BOM from Configurator XML
+
+Turn an Eaton Bid Manager takeoff export into the electrical BOM that loads to the AML. Applies to Marina Panels and Substations.
+
+### 9a. Inputs
+- **Panel takeoff XML** — `PNLXS*.xml` (PRL4X) or per-panel `*-MPLW*.xml` (PRL1X). One file per panel/designation. **Authoritative** for catalog numbers.
+- **Substation summary (MD)** — `*-SEBC*.md` etc.: enclosure, transformer, GFM, primary breaker, panel. Use for substation-level items not in the panel XML. When XML and MD disagree, the **latest ALT / XML wins**.
+- **Stamp on every row:** GO#, Job, Line Item (= panel designation, e.g. `001` / `001A`). Column **G** = the negotiation/ALT reference (e.g. `MPLW0702X5K1 - 0010`, `U0190829X4K1 - 0059`).
+
+### 9b. Output columns (match `Active_AML_Log`)
+`GO | Line Item | Job | Part No. | Part Descr. | Qty | Details/Supplier/Drop Ship Address (G)`
+
+### 9c. Categories to output
+Breakers · Shunt trips · CTs · RCMS/GFM · SPDs · **Transformer** (substations) · **Panelboard** (one per designation). Exclude chassis, bus, ground bar, covers, nameplates, seismic labels, and **provisions/spaces** (`TWIN_SPACE`, `PROVBAB1`).
+
+### 9d. Breaker part numbers by family
+| Family | Rule |
+|---|---|
+| **PD / PDD / PDG** | Base `BuildCatnum_cache` with the trailing `N…N` stripped **+ `J`** (standard lugs). e.g. `PDG43G0800TFANNNNNNN` → **`PDG43G0800TFAJ`**; `PDD32G0300TFANNNNNNN` → **`PDD32G0300TFAJ`**. Applies to mains **and** branches. |
+| **FD** | Standard catalog `FD<poles><amps>` (e.g. `FD2100`). Used when a **2-pole PD can't take a shunt** — convert PD→FD by matching **amps + poles**. |
+| **BAB (PRL1X)** | Standard catalog as-is (`BAB2100S`, `BAB2030`, `BAB1020`). The **`S` suffix = integrated shunt trip** — no separate shunt line. |
+| **Others** (QBH, GHQ, NGS, QB…GF) | Standard ordering catalog. |
+
+### 9e. Shunt trips
+- **FD branch:** `SNT1RP08K`, one per shunt-tripped FD breaker.
+- **PD branch/main:** frame-matched — `PDG3XST130ACDCS` (Frame 3), `PDG4XST130ACDCS` (Frame 4). A Frame-4 shunt won't seat in a Frame-3 breaker. Standardize the coil to `130ACDC`.
+- **BAB:** integrated (no separate line).
+- Match shunt frame to breaker frame. **Never output `CN…` placeholder IDs.**
+
+### 9f. CTs — one per shunt-/GFM-monitored branch, sized by breaker amps
+| Amps | CT | mm |
+|---|---|---|
+| 15–100A | `C311CT35` | 35 |
+| 125–250A | `C311CT60` | 60 |
+| 300–600A | `CTAC120` | 120 |
+| 700–1200A | `CTAC210` | 210 |
+
+CT descr = "NN mm Current Transformer". **Mains get no CT** when their shunt is wired for an **E-stop** (not GFM).
+
+### 9g. RCMS / GFM
+- **Multi-circuit** → `RCMS490D-A2` ("Multi CT Ground Fault Monitor"). One unit per "Multi Circuit Ground Fault Monitor – N Circuits" note (each handles ≤12 circuits), or one per substation.
+- **Single-circuit** → `RCM420-D-2`.
+
+### 9h. Transformer (substations) — from the **MPL Eaton Transformer List**
+Match **KVA + phase + primary/secondary voltage + windings + rise**. **Phase tell:** `120/240V` secondary = **1-phase**; `120/208V` = **3-phase**. Worked: 75KVA 1Ph 480→120/240 Cu 150C = **`T20P11S7516CCCU`** (not the 3Ph `V48…7516`, which is 120/208).
+
+### 9i. Panelboard line (substations)
+One row per designation using the panel's `Pnl_Catnum`, descr "Pow-R-Line_X Marina Unit Substation – <desig>". Consolidate designations that share the same catnum.
+
+### 9j. Consolidation & quantities
+Group identical Part No. across designations onto **one** row; Line Item lists them all (`001,002,003`); sum Qty. Don't multiply by repeated layout instances.
+
+### Worked examples
+- **TCM Substations (`EUX0003724`)** — PRL4X: PD mains (base+J) + FD-converted 2-pole branches + `SNT1RP08K`; PDG3X/PDG4X main shunts (E-stop → no main CT); C311CT35/60; `RCMS490D-A2` ×4 (one per GFM note).
+- **Anchor Cove Marina (`SSE1514103`)** — 3× PRL1X marina unit substations: `PDD32G0300TFAJ` main + BAB branches (`BAB2100S` integrated shunt, `BAB2030`, `BAB1020`); `T20P11S7516CCCU` 75KVA transformer; `RCMS490D-A2` + `C311CT35` (2 per sub); `PDG32F0150TFAJ` primary breaker; `PROVBAB1` provisions excluded.
+
+---
+
+## 10. Dropping a BOM into the Master AML
+
+### 10a. Column layout (`Active_AML_Log`, header on row 2)
+`A` GO · `B` Line Item · `C` Job · `D` Part No. · `E` Part Descr. · `F` Qty · `G` Details/Supplier/Drop Ship Address · `H`+ buyer / order# / dates / received (procurement) · `AA` AML Shelf Check.
+
+### 10b. Substation entry pattern (mirror existing subs)
+Itemize: **transformer** + **panelboard per designation** + **every breaker** + **shunts** + **RCMS/CTs**, consolidating identical parts across designations. Cross-checked against St. Andrews, Puerto Los Cabos, Norfolk, Naples, Harbor View.
+
+### 10c. Placement rules (writing to the shared AML)
+1. **Only write empty cells; never change existing data.**
+2. **Keep the whole BOM contiguous** — find the next group of adjacent empty rows big enough for all rows; don't scatter into the first stray blanks.
+3. **⚠ Find the TRUE data end.** Column **AA ("AML Shelf Check")** is pre-filled with **"No"** far below the last real entry, so "last non-empty row" is misleading. Use the **last row that has data in A–G**, and drop the BOM in the rows immediately below it.
+4. **Write only A–G.** Leave H–Z for procurement; leave the pre-existing AA "No" untouched.
+5. **Targeted cell-range write** (Excel range API), not a file re-upload, so only the target cells change.
+6. **Show the exact target rows + values and get approval before writing.**
+
+### Worked example
+`SSE1514103` (10 rows) — real A–G data ended at **row 658** (the TCM job), though the AA "No" ran to 3498. Placed in **A659:G668**; nothing else touched.
+
+---
+
 ## Change Log
 
 | Date | Version | Change |
@@ -123,3 +202,4 @@ Flags — **for review only, nothing is changed** — across all product familie
 | 2026-07-08 | 1.0 | Initial document — data sources, panel-requiring product codes, reconciliation process, caveats, scheduled task, and 07-08-2026 snapshot. |
 | 2026-07-08 | 1.1 | Clarified each run reads the **current date's** report (or the most recent available); reconciliation works from the **Backlog** tab; relabeled §7 as an example snapshot. |
 | 2026-07-09 | 1.2 | Broadened the task to **panels + data-quality scan**; added catalog-signature detection (§3), the data-quality scan (§7), and the four-tab styled output workbook (§6); renamed the task; refreshed the snapshot to 07-09-2026. |
+| 2026-07-09 | 1.3 | Added **§9 XML→BOM build rules** (PD base+`J` ordering; PD→FD 2-pole-shunt conversion; BAB integrated-shunt family; frame-matched shunts; CT sizing; RCMS/GFM; transformer lookup incl. 1Ph vs 3Ph tell; panelboard line; cross-designation consolidation) and **§10 Master AML drop-in procedure** (substation entry pattern; write only empty A–G; keep the BOM contiguous; find the true data end past the pre-filled "No" in col AA). Worked examples: TCM Substations (PRL4X PD/FD) and Anchor Cove Marina `SSE1514103` (PRL1X BAB, placed at A659:G668). |
