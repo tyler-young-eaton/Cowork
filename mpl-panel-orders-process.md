@@ -1,14 +1,16 @@
-# MPL Daily Panel-Orders → Master AML Process
+# MPL Daily Sales-Report Review — Panels & Data Quality
 
 > **Owner:** Tyler D. Young (Sr. Design Engineer, Eaton MPL)
 > **Maintained in git** — see the Change Log at the bottom. Copilot proposes updates and supplies a commit note; Tyler commits.
-> **Last updated:** 2026-07-08 (v1.1)
+> **Last updated:** 2026-07-09 (v1.2)
 
 ---
 
 ## 1. Purpose
 
-Each business day, identify the open marine orders that **require an electrical panel to be ordered/built**, and reconcile them against the **Master AML** procurement log so nothing that needs parts placed slips through. The output is a short list of orders that are **not yet on the AML** (i.e. still need action), plus a supporting spreadsheet.
+Each business day, review the newest daily Order & Sales Report and produce one workbook that does two jobs:
+1. **Panel-order → AML reconciliation** — find the open marine orders that **require an electrical panel to be ordered/built** and check each against the **Master AML** procurement log, so nothing that needs parts placed slips through.
+2. **Data-quality scan** — flag potential errors anywhere in the report (mislabels, bad dates, blanks, etc.) for review.
 
 ---
 
@@ -17,18 +19,16 @@ Each business day, identify the open marine orders that **require an electrical 
 ### 2a. Daily Order & Sales Report (source of open orders)
 - **Location:** MPL-Operations SharePoint → `Shared Documents` → `General` → **`Sales-Orders Reports`**
 - **Folder logic:** `Sales-Orders Reports / {YYYY} / {MM-MonthName} / {MM-DD-YYYY}.xlsm`
-  - Example: `2026 / 07-July / 07-08-2026.xlsm`
-- **Naming:** `MM-DD-YYYY.xlsm` (macro-enabled). The file dated a given day contains data **through the prior working day** (the "Yesterday" column).
+  - Example: `2026 / 07-July / 07-09-2026.xlsm`
+- **Naming:** `MM-DD-YYYY.xlsm` (macro-enabled). The file dated a given day contains data **through the prior working day**. (The month folder also holds daily `.csv` exports of the Backlog/Orders/Sales.)
 - **Key tab used:** **`Backlog`** — every open order line. Relevant columns:
   `General Order Number`, `General Order Item`, `Job Name`, `Cust Name`, `Catalog Number`,
   `Item Quantity Open`, `Item Status`, `Required Ship Date`, `Commit Ship Date`,
   `Product Code`, `Product Code Description`, `Product Line`, `Item Extended Amount`.
-- Other useful tabs: `Daily Orders` (bookings), `Invoice Data` (shipments), `Product Codes` (code→description→line map), `Order Overview Pivot`.
 
 ### 2b. Master AML (source of "what's been placed")
 - **Location:** MPL-Operations SharePoint → `Shared Documents` → `General` → **`Master AML.xlsx`**
-- **Key tab:** **`Active_AML_Log`** (~3,500 rows; header on **row 2**). A procurement log keyed by **`GO` (General Order number)** + **`Job`**, listing the parts/breakers to be purchased per order, with buyer, `Order #`, ship date, and received date.
-- Archive/other tabs: `Completed and Archived AML Log`, `Archived_AML_2025/2024/2023`, `Excess Inventory`.
+- **Key tab:** **`Active_AML_Log`** (~3,500 rows; header on **row 2**). A procurement log keyed by **`GO` (General Order number)** + **`Job`**, listing the parts/breakers to be purchased per order.
 - **Match key between the two files: the General Order number** (`General Order Number` in the report = `GO` in the AML).
 
 ---
@@ -41,60 +41,78 @@ Orders in these product codes require a panel to be ordered:
 |---|---|---|---|---|
 | **Marina Panels** | `BC34A` | Panels | Marine | Catalog family `PUN…` |
 | **Substations** | `BC34M` | Substation - Marine | Marine | |
-| **Substations (sub-assembly)** | `BC34C` | Sub Assembly - Substations | Marine | Currently 0 open |
+| **Substations (sub-assembly)** | `BC34C` | Sub Assembly - Substations | Marine | |
 | **Event Panels** | `BC28` | Portable Power | Marine | Catalog prefix `EP-` |
-| **Mega Yachts** | `BC33` | Mega Yachts | Marine | Currently 0 open |
+| **Mega Yachts** | `BC33` | Mega Yachts | Marine | |
+
+**Detection uses product code AND catalog signature.** A panel can be booked under a non-panel code (see §5), so also treat any line whose **Catalog Number** is from the pedestal-panel family (`PUN…`) as panel content, regardless of its product code.
 
 ---
 
 ## 4. Process (per run)
 
-1. Open the daily report for the **current date** (Section 2a folder logic). **If there is no file for today** — weekend, holiday, or simply not posted yet — use the **next most recent available** file instead. Never read a fixed/older date.
-2. Work from the **`Backlog`** tab only — that is all the reconciliation needs. (Only fall back to a full-workbook search if it genuinely helps your analysis.) In `Backlog`, filter rows where **`Product Code`** is one of `BC34A`, `BC34M`, `BC34C`, `BC28`, `BC33`.
-3. Collect the key columns (Section 2a) for each matching line.
-4. For each order's **General Order number**, check whether it appears in **`Master AML.xlsx → Active_AML_Log`**.
-   - **Present** → already placed on the AML.
-   - **Absent** → **needs to be placed** (action item).
-5. Compare against the **previous business day's** report to flag changes: new orders, orders that dropped off (shipped/closed), and status changes (e.g. newly on Hold).
-6. Produce a spreadsheet: **`Panel Orders to Verify vs AML - MM-DD-YYYY.xlsx`** with two tabs:
-   - **Panel Orders** — every matching line item, incl. an `On Active AML?` column.
-   - **Summary by Order** — one row per General Order, with lines, open value, AML status, and notes.
+1. Open the daily report for the **current date** (Section 2a folder logic). **If there is no file for today** — weekend, holiday, or not yet posted — use the **next most recent available** file. Never read a fixed/older date.
+2. Work from the **`Backlog`** tab (full-workbook review only if it helps). Identify panel-requiring lines by **product code** (`BC34A/BC34M/BC34C/BC28/BC33`) **and** by **catalog signature** (`PUN…`).
+3. For each order's **General Order number**, check the **`Master AML → Active_AML_Log`**: **Logged** if present, **MISSING** if absent (= needs to be placed).
+4. Mark **New Today** for orders that appear for the first time versus the previous business day's report.
+5. Run the **data-quality scan** (see §7) across the whole report.
+6. Produce the styled workbook (see §6) and send the Teams summary.
 
 ---
 
 ## 5. Caveats / Gotchas
 
-- **AML match is GO#-level only.** A "YES" means the order *number* appears in the log — **not** that every required panel part for that order has been entered. Still verify part-by-part before closing an order out.
-- **Mis-coded orders slip past the filter.** An order can require a panel but be booked under a non-panel code.
-  - *Known example:* **`STA1510549`** (Gebhart Electric / Dock Boxes Unlimited Sarasota) is booked under **Steel / Nema 4X Boxes (`P3200`)**, but item `001I` catalog `PUNCBFBTB24E` is from the `PUN…` pedestal/panel family, and its `001B / 001I / 001T` suffixes read as **Box / Internal / Trim** of a pedestal. Orders like this won't be caught by the product-code filter — spot-check `PUN…`-family catalog items sitting under Steel/Nema codes.
-- **Item status codes:** `O` = Open (in process), `H` = Hold; a separate `T hold` tab lists T-status items. Full definitions live on the report's `Item Status Code` tab.
+- **AML match is GO#-level only.** "Logged" means the order *number* appears in the log — **not** that every required panel part has been entered. Verify part-by-part before closing an order out.
+- **Mis-coded orders** — an order can require a panel but be booked under a non-panel code. The catalog-signature check (§3) now catches these.
+  - *Known example:* **`STA1510549`** (Gebhart Electric) is booked under **Steel / Nema 4X Boxes (`P3200`)**, but item `001I` catalog `PUNCBFBTB24E` is a `PUN…` pedestal, and its `001B / 001I / 001T` suffixes read as **Box / Internal / Trim**. Caught by catalog, missed by code.
+- **Item status codes:** `O` = Open, `H` = Hold, `T` = T-hold. Full definitions live on the report's `Item Status Code` tab.
 
 ---
 
-## 6. Scheduled Task
+## 6. Scheduled Task & Output
 
 | Field | Value |
 |---|---|
-| **Name** | Daily Panel-Orders vs AML Check |
+| **Name** | Daily Sales-Report Review — Panels & Data Quality |
 | **Schedule** | Every day, **7:00 AM America/New_York (Eastern)** |
-| **Run mode** | Fresh/stateless each run (re-derives from that day's files) |
-| **What it does** | Opens the report for **the current date** (or the **most recent available** file if today's isn't posted) → reads the **`Backlog`** tab (full-workbook search only if needed) → pulls the panel-requiring open orders (Section 3) → compares to the Active AML by GO# → flags day-over-day changes → highlights orders still needing AML placement |
-| **Delivery** | Brief **Teams message to Tyler**; detailed line-item spreadsheet saved to his files |
+| **Run mode** | Fresh/stateless each run |
+| **What it does** | Opens the current (or most recent) report → panel reconciliation vs the Active AML (§3–4) → data-quality scan (§7) → produces the workbook below → sends a Teams summary |
+| **Delivery** | Concise **Teams message to Tyler** (MISSING orders + data-quality counts); full workbook saved to his files, named with the report date |
 
-*Open options (not yet changed): weekdays-only instead of 7-day; email instead of Teams.*
+**Output workbook — four tabs:**
+1. **Overview** — panel counts (total / Logged / MISSING / New Today) + data-quality tally by type.
+2. **AML Reconciliation Summary** — one row per order (AML Status, New Today, Customer, Job, Product Code(s), Panel Type, # Panel Lines, Total Qty Open, Backlog Value, Items on Hold, Required Ship) + a **TOTAL** row.
+3. **Panel Line Items** — every panel line, so each order traces to its exact lines.
+4. **Data-Quality Flags** — every flagged line with Issue Type + Detail.
+
+**Formatting:** navy title banners, blue headers, thin gray borders, **red MISSING / green Logged / gold New Today** cells, a light-blue **TOTAL** row, and a color **legend**. Save under a date-stamped filename each day (avoids same-name caching).
+
+*Open options (not changed): weekdays-only instead of 7-day; email instead of Teams; tighten the data-quality scan (drop holds / narrow zero-price) if the flag volume is too noisy.*
 
 ---
 
-## 7. Example Snapshot — 07-08-2026 report (data through 07-07-2026)
+## 7. Data-Quality Scan
 
-> Point-in-time example captured when this doc was written. **Each run reads the current date's report (or the most recent available file), not this fixed date** — the numbers below will differ day to day.
+Flags — **for review only, nothing is changed** — across all product families:
 
-- **76 open line items** across **13 General Orders**, **$1,255,433** total open value.
-- By category: Marina Panels **46 / $337,328** · Substations **29 / $915,058** · Event Panels **1 / $3,047** · Mega Yachts **0**.
-- **Orders NOT yet on the Active AML (action items):**
-  - `SSE1514103` — Anchor Cove Marina (Substation) — ~$56,863
-  - `STA1503274` — North Coast Montana (Marina Panels) — ~$9,604
-  - `SML1408670` — Oyster Point Marina — $3 (appears in the 2025 archive; likely a leftover line)
+| Issue Type | What it catches |
+|---|---|
+| **Catalog/Code mismatch** | A catalog whose family implies a different product code than assigned (the `STA1510549` class) |
+| **Unmapped catalog (#N/A)** | Catalog not found in the product-code map |
+| **Blank/zero open qty** | Open quantity missing or zero |
+| **Zero/blank unit price** | Price missing or zero |
+| **Implausible ship date** | Required/commit dates far in the future (e.g. 2028–2029), a commit date before the order date, or malformed values |
+| **On Hold / T-hold** | Items in `H` or `T` status (high-volume; candidate to drop if noisy) |
+
+---
+
+## 8. Example Snapshot — 07-09-2026 report
+
+> Point-in-time example. **Each run reads the current date's report** — numbers differ day to day.
+
+- **Panels:** 15 orders (**10 Logged**, **5 MISSING**), 85 line items.
+- **MISSING from the Active AML (action items):** `LTA0041698` (Sarasota Yacht Club), `SSE1514103` (Anchor Cove Marina), `STA1503274` (North Coast Montana), `STA1510549` (Gebhart Electric — the mislabeled one), `SML1408670` (Oyster Point).
+- **Data-quality:** 313 flags — Catalog/Code mismatch 12 · Unmapped #N/A 6 · Blank qty 10 · Zero price 59 · Implausible date 28 · Hold/T-hold 198.
 
 ---
 
@@ -102,5 +120,6 @@ Orders in these product codes require a panel to be ordered:
 
 | Date | Version | Change |
 |---|---|---|
-| 2026-07-08 | 1.0 | Initial document — data sources, panel-requiring product codes (BC34A/BC34M/BC34C/BC28/BC33), reconciliation process, caveats, scheduled task, and 07-08-2026 snapshot. |
-| 2026-07-08 | 1.1 | Clarified that each run reads the **current date's** report (or the most recent available file when today's is missing) rather than a fixed date; noted the reconciliation works from the **Backlog** tab only, with full-workbook search optional; relabeled §7 as an example snapshot. |
+| 2026-07-08 | 1.0 | Initial document — data sources, panel-requiring product codes, reconciliation process, caveats, scheduled task, and 07-08-2026 snapshot. |
+| 2026-07-08 | 1.1 | Clarified each run reads the **current date's** report (or the most recent available); reconciliation works from the **Backlog** tab; relabeled §7 as an example snapshot. |
+| 2026-07-09 | 1.2 | Broadened the task to **panels + data-quality scan**; added catalog-signature detection (§3), the data-quality scan (§7), and the four-tab styled output workbook (§6); renamed the task; refreshed the snapshot to 07-09-2026. |
